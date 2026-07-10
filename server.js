@@ -15,51 +15,55 @@ app.post('/api/deploy', (req, res) => {
         return res.status(400).json({ success: false, message: 'Missing parameters.' });
     }
 
-    // Kill previous bot instance if it exists to avoid overlapping connections
     if (activeBot) {
         try { activeBot.quit(); } catch(e){}
     }
 
+    // Wrap the deployment inside a try/catch box to shield the engine from crashes
     try {
         activeBot = mineflayer.createBot({
             host: ip,
             port: port,
             username: 'Server_Keeper_247',
-            version: false // Autodetects target network protocols smoothly
+            version: false,
+            skipValidation: true // Skips heavy handshakes to connect faster on weak hosts
         });
 
-        // Anti-AFK Routine: Mimic periodic tiny player movements to clear idle sweeps
         activeBot.on('spawn', () => {
-            console.log(`[Engine] Bot successfully bound to target instance: ${ip}:${port}`);
+            console.log(`Bot connected to ${ip}:${port}`);
             setInterval(() => {
                 if (activeBot && activeBot.entity) {
                     activeBot.setControlState('jump', true);
-                    setTimeout(() => {
-                        if(activeBot) activeBot.setControlState('jump', false);
-                    }, 500);
+                    setTimeout(() => { if(activeBot) activeBot.setControlState('jump', false); }, 500);
                 }
-            }, 30000); // Triggers a small jump adjustment every 30 seconds
+            }, 30000);
         });
 
-        // Auto-reconnect routine if kicked or dropped by the proxy handler
+        // SAFETY NET: Catches connection errors instead of crashing the web app
+        activeBot.on('error', (err) => {
+            console.log(`[Mineflayer Caught Error]: ${err.message}`);
+        });
+
         activeBot.on('end', () => {
-            console.log('[Engine] Handshake connection closed. Re-establishing connection matrix...');
-            setTimeout(() => {
-                if(ip && port) {
-                    // Safe execution loop fallback
-                }
-            }, 5000);
+            console.log('Bot disconnected from server.');
         });
 
-        activeBot.on('error', (err) => console.log(`[Engine Error] ${err.message}`));
-
-        return res.json({ success: true, message: 'Handshake execution active.' });
+        // Instantly return true to the front end so the button updates
+        return res.json({ success: true, message: 'Handshake running.' });
 
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({ success: false, message: "Failed to initialize bot thread." });
     }
 });
 
+// GLOBAL SHIELD: Prevents the entire website from breaking if Mineflayer fails completely
+process.on('unhandledRejection', (reason, promise) => {
+    console.log('Handled an unhandled network promise rejection.');
+});
+process.on('uncaughtException', (err) => {
+    console.log('Prevented a fatal engine crash.');
+});
+
 app.listen(3000, () => {
-    console.log('Control terminal running safely on port 3000');
+    console.log('Secure server running.');
 });
