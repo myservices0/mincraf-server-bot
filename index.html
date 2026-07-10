@@ -1,35 +1,180 @@
-async function deployBot() {
-    const ip = document.getElementById('srvIp').value;
-    const port = document.getElementById('srvPort').value;
-    const statusDiv = document.getElementById('status');
-
-    if(!ip || !port) {
-        statusDiv.innerText = "Error: Fill out all parameters.";
-        return;
-    }
-
-    statusDiv.style.color = "#ffeb3b";
-    statusDiv.innerText = "Waking up cloud server and connecting... (May take 30s)";
-
-    try {
-        // Increased timeout loop to handle cloud service spin-ups
-        const response = await fetch('/api/deploy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, port: parseInt(port) }),
-            signal: AbortSignal.timeout(45000) // Gives the host 45 seconds to wake up
-        });
-        
-        const data = await response.json();
-        if(data.success) {
-            statusDiv.style.color = "#00e676";
-            statusDiv.innerText = "Status: Bot deployed successfully!";
-        } else {
-            statusDiv.style.color = "#ff4a4a";
-            statusDiv.innerText = "Server Error: " + data.message;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VULCAN MATRIX: TEMP MAIL CORE</title>
+    <style>
+        body {
+            background-color: #0b0c10; color: #c5c6c7;
+            font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px;
+            display: flex; flex-direction: column; height: 95vh;
         }
-    } catch (err) {
-        statusDiv.style.color = "#ff4a4a";
-        statusDiv.innerText = "Cloud backend is waking up. Wait 10 seconds and click Deploy again!";
+        .header-panel {
+            background: #1f2833; padding: 15px 25px; border-radius: 8px;
+            border: 2px solid #66fcf1; box-shadow: 0 0 15px rgba(102,252,241,0.2);
+            display: flex; gap: 15px; align-items: center; margin-bottom: 20px;
+        }
+        h2 { margin: 0; color: #66fcf1; font-size: 20px; text-transform: uppercase; }
+        input, select {
+            background: #0b0c10; border: 1px solid #45f3ff; padding: 10px;
+            color: #fff; border-radius: 4px; font-weight: bold;
+        }
+        button {
+            background: #66fcf1; border: none; padding: 10px 20px;
+            color: #0b0c10; font-weight: bold; border-radius: 4px; cursor: pointer;
+            text-transform: uppercase; transition: 0.2s;
+        }
+        button:hover { background: #45f3ff; box-shadow: 0 0 10px #45f3ff; }
+        
+        .workspace { display: flex; gap: 20px; flex: 1; min-height: 0; }
+        
+        /* Left Sidebar: Active Emails List */
+        .sidebar-inboxes {
+            width: 320px; background: #1f2833; border-radius: 8px;
+            border: 1px solid #45f3ff; padding: 15px; display: flex;
+            flex-direction: column; gap: 10px; overflow-y: auto;
+        }
+        .inbox-card {
+            background: #0b0c10; padding: 12px; border-radius: 6px;
+            border: 1px solid #1f2833; cursor: pointer; display: flex;
+            justify-content: space-between; align-items: center; transition: 0.2s;
+        }
+        .inbox-card:hover, .inbox-card.active { border-color: #66fcf1; background: #151a21; }
+        .email-text { font-size: 13px; font-family: monospace; color: #fff; overflow: hidden; text-overflow: ellipsis; }
+        .notification-badge {
+            background: #ff4a4a; color: white; border-radius: 50%;
+            padding: 2px 7px; font-size: 11px; font-weight: bold;
+            box-shadow: 0 0 8px #ff4a4a; display: none;
+        }
+        
+        /* Right Side: Email Viewer Panel */
+        .viewer-panel {
+            flex: 1; background: #1f2833; border-radius: 8px;
+            border: 1px solid #45f3ff; display: flex; flex-direction: column; padding: 20px;
+        }
+        .messages-list {
+            flex: 1; overflow-y: auto; border-bottom: 1px solid #45f3ff;
+            margin-bottom: 15px; display: flex; flex-direction: column; gap: 8px;
+        }
+        .msg-item {
+            background: #0b0c10; padding: 12px; border-radius: 6px; cursor: pointer;
+            border-left: 4px solid #66fcf1;
+        }
+        .msg-item .meta { font-size: 12px; color: #66fcf1; display: flex; justify-content: space-between; }
+        .msg-item .subj { font-weight: bold; margin-top: 4px; color: #fff; }
+        .body-display { flex: 1; background: #0b0c10; border-radius: 6px; padding: 15px; overflow-y: auto; color: #fff; }
+    </style>
+</head>
+<body>
+
+<div class="header-panel">
+    <h2>Mail Matrix</h2>
+    <input type="text" id="prefix" placeholder="Desired Name (e.g., bot)">
+    <input type="number" id="count" min="1" max="50" value="5" style="width: 70px;">
+    <button onclick="generateMatrix()">Generate Matrix</button>
+</div>
+
+<div class="workspace">
+    <div class="sidebar-inboxes" id="inboxList">
+        <!-- Temporary Accounts Render Here Dynamically -->
+    </div>
+    <div class="viewer-panel">
+        <h3 style="margin-top:0; color:#66fcf1;" id="activeViewingTitle">Select an inbox</h3>
+        <div class="messages-list" id="msgList">
+            <!-- Incoming Emails list here -->
+        </div>
+        <div class="body-display" id="emailBody">
+            Content box...
+        </div>
+    </div>
+</div>
+
+<script>
+    let activeInboxes = [];
+    let currentAccount = null;
+
+    async function generateMatrix() {
+        const prefix = document.getElementById('prefix').value || 'temp';
+        const count = parseInt(document.getElementById('count').value) || 1;
+        document.getElementById('inboxList').innerHTML = "<h4>Creating accounts...</h4>";
+        
+        try {
+            const res = await fetch('/api/create-matrix', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prefix, count })
+            });
+            const data = await res.json();
+            activeInboxes = data.accounts;
+            renderInboxes();
+            
+            // Instantly initiate the live update listener sequence
+            setInterval(checkLiveUpdates, 4000);
+        } catch (err) {
+            document.getElementById('inboxList').innerHTML = "<h4 style='color:#ff4a4a'>Generation Failed</h4>";
+        }
     }
-}
+
+    function renderInboxes() {
+        const list = document.getElementById('inboxList');
+        list.innerHTML = "";
+        activeInboxes.forEach((acc, index) => {
+            const card = document.createElement('div');
+            card.className = `inbox-card ${currentAccount?.email === acc.email ? 'active' : ''}`;
+            card.onclick = () => selectInbox(acc);
+            card.innerHTML = `
+                <div class="email-text">${acc.email}</div>
+                <div class="notification-badge" id="badge-${index}">0</div>
+            `;
+            list.appendChild(card);
+        });
+    }
+
+    async function selectInbox(acc) {
+        currentAccount = acc;
+        renderInboxes();
+        document.getElementById('activeViewingTitle').innerText = `Viewing: ${acc.email}`;
+        fetchMessages();
+    }
+
+    async function fetchMessages() {
+        if (!currentAccount) return;
+        const res = await fetch(`/api/messages?email=${currentAccount.email}&token=${currentAccount.token}`);
+        const data = await res.json();
+        const msgList = document.getElementById('msgList');
+        msgList.innerHTML = data.messages.length === 0 ? "<div style='padding:10px;'>Waiting for messages...</div>" : "";
+        
+        data.messages.forEach(msg => {
+            const div = document.createElement('div');
+            div.className = "msg-item";
+            div.onclick = () => document.getElementById('emailBody').innerHTML = msg.text || msg.html;
+            div.innerHTML = `
+                <div class="meta"><span>From: ${msg.from.address}</span></div>
+                <div class="subj">${msg.subject}</div>
+            `;
+            msgList.appendChild(div);
+        });
+    }
+
+    async function checkLiveUpdates() {
+        activeInboxes.forEach(async (acc, index) => {
+            try {
+                const res = await fetch(`/api/messages?email=${acc.email}&token=${acc.token}`);
+                const data = await res.json();
+                const badge = document.getElementById(`badge-${index}`);
+                if (data.messages.length > 0) {
+                    badge.innerText = data.messages.length;
+                    badge.style.display = "block";
+                    if (currentAccount?.email === acc.email) {
+                        fetchMessages(); // Update dynamically if currently open
+                    }
+                } else {
+                    badge.style.display = "none";
+                }
+            } catch(e) {}
+        });
+    }
+</script>
+</body>
+</html>
