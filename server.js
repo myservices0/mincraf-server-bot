@@ -1,69 +1,59 @@
 const express = require('express');
-const mineflayer = require('mineflayer');
+const axios = require('axios');
 const path = require('path');
 const app = express();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-let activeBot = null;
+const MAIL_API = "https://api.mail.tm"; // Fast public mail domain framework API
 
-app.post('/api/deploy', (req, res) => {
-    const { ip, port } = req.body;
+// Get available temp domain strings automatically
+let availableDomain = "";
+axios.get(`${MAIL_API}/domains`).then(res => {
+    availableDomain = res.data['hydra:member'][0].domain;
+    console.log(`[System Ready] Routing emails via domain: @${availableDomain}`);
+});
 
-    if (!ip || !port) {
-        return res.status(400).json({ success: false, message: 'Missing parameters.' });
+app.post('/api/create-matrix', async (req, res) => {
+    const { prefix, count } = req.body;
+    let accountsCreated = [];
+
+    for (let i = 1; i <= count; i++) {
+        // Generates cleanly separated variations like bot1, bot2...
+        const uniqueUser = `${prefix}${i}_${Math.floor(Math.random() * 8999 + 1000)}`;
+        const emailAddress = `${uniqueUser}@${availableDomain}`;
+        const rawPassword = "VulcanStaticPass123!";
+
+        try {
+            // Register account natively into the disposable email API
+            await axios.post(`${MAIL_API}/accounts`, { address: emailAddress, password: rawPassword });
+            
+            // Authorize and grab the unique network access token
+            const authRes = await axios.post(`${MAIL_API}/token`, { address: emailAddress, password: rawPassword });
+            
+            accountsCreated.push({
+                email: emailAddress,
+                token: authRes.data.token
+            });
+        } catch (err) {
+            console.log(`Generation skip on item ${i}`);
+        }
     }
+    res.json({ accounts: accountsCreated });
+});
 
-    if (activeBot) {
-        try { activeBot.quit(); } catch(e){}
-    }
-
-    // Wrap the deployment inside a try/catch box to shield the engine from crashes
+// Real-time message polling proxy
+app.get('/api/messages', async (req, res) => {
+    const { token } = req.query;
     try {
-        activeBot = mineflayer.createBot({
-            host: ip,
-            port: port,
-            username: 'Server_Keeper_247',
-            version: false,
-            skipValidation: true // Skips heavy handshakes to connect faster on weak hosts
+        const msgRes = await axios.get(`${MAIL_API}/messages`, {
+            headers: { Authorization: `Bearer ${token}` }
         });
-
-        activeBot.on('spawn', () => {
-            console.log(`Bot connected to ${ip}:${port}`);
-            setInterval(() => {
-                if (activeBot && activeBot.entity) {
-                    activeBot.setControlState('jump', true);
-                    setTimeout(() => { if(activeBot) activeBot.setControlState('jump', false); }, 500);
-                }
-            }, 30000);
-        });
-
-        // SAFETY NET: Catches connection errors instead of crashing the web app
-        activeBot.on('error', (err) => {
-            console.log(`[Mineflayer Caught Error]: ${err.message}`);
-        });
-
-        activeBot.on('end', () => {
-            console.log('Bot disconnected from server.');
-        });
-
-        // Instantly return true to the front end so the button updates
-        return res.json({ success: true, message: 'Handshake running.' });
-
-    } catch (error) {
-        return res.status(500).json({ success: false, message: "Failed to initialize bot thread." });
+        res.json({ messages: msgRes.data['hydra:member'] });
+    } catch (err) {
+        res.status(500).json({ messages: [] });
     }
 });
 
-// GLOBAL SHIELD: Prevents the entire website from breaking if Mineflayer fails completely
-process.on('unhandledRejection', (reason, promise) => {
-    console.log('Handled an unhandled network promise rejection.');
-});
-process.on('uncaughtException', (err) => {
-    console.log('Prevented a fatal engine crash.');
-});
-
-app.listen(3000, () => {
-    console.log('Secure server running.');
-});
+app.listen(3000, () => console.log('Matrix Control Engine running on port 3000'));
